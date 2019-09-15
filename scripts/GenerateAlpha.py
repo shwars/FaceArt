@@ -15,8 +15,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument("dir",help="Directory of pictures to be processed",default=".")
 parser.add_argument("--person",help="Person ID",default="")
 parser.add_argument("--large-fit",help="Use large fit, i.e. make face smaller")
+parser.add_argument("--size",type=int,help="Size of output images",default=600)
 parser.add_argument("--num",type=int,help="Number of pictures to generate",default=1)
-
+parser.add_argument("--output",help="What to generate: alpha or point cloud",default='alpha')
 args = parser.parse_args()
 
 dir = 'z:/temp/pics'
@@ -27,6 +28,9 @@ person_id = '6af1e28f-b74b-4856-8e73-d4f01f6cb560' # Aki
 person_id = ''
 dir = args.dir
 person_id = args.person
+size=1200
+
+target_triangle = [(x/300*size,y/300*size) for (x,y) in [(130,120),(170,120),(150,160)]]
 
 print("Opaque Portrait Generator")
 
@@ -52,7 +56,7 @@ def merge(images,wts=None):
     wts /= np.sum(wts)
     for n,i in enumerate(images):
         res += wts[n]*i.astype(np.float32)
-    return res.astype(np.uint)
+    return res.astype(np.int32)
 
 data = (
     mp.get_files(dir,ext='.json')
@@ -61,6 +65,7 @@ data = (
     | mp.unroll('descr')
     | mp.filter('descr',lambda x: person_id=="" or ('candidates' in x and person_id in [z['personId'] for z in x['candidates']]))
     | mp.filter('descr',lambda x: abs(x['faceAttributes']['headPose']['yaw'])<15 and abs(x['faceAttributes']['headPose']['pitch'])<15)
+    | mp.filter('descr',lambda x: x['faceLandmarks']['pupilRight']['x']-x['faceLandmarks']['pupilLeft']['x']>50)
     | mp.as_list)
 
 print("Found {} faces".format(len(data)))
@@ -70,19 +75,25 @@ def get_transform(descr):
     mc_x = (f['mouthLeft']['x']+f['mouthRight']['x'])/2.0
     mc_y = (f['mouthLeft']['y'] + f['mouthRight']['y']) / 2.0
     return cv2.getAffineTransform(np.float32([(f['pupilLeft']['x'],f['pupilLeft']['y']),(f['pupilRight']['x'],f['pupilRight']['y']),(mc_x,mc_y)]),
-                                np.float32([(80,150),(120,150),(100,190)]))
+                                np.float32(target_triangle))
 
 def transform(args):
     image,descr = args
     tr = get_transform(descr)
-    return cv2.warpAffine(image,tr,(200,300))
+    return cv2.warpAffine(image,tr,(size,size))
+
+@mp.Pipe
+def savepics(seq,fn):
+    for i,im in enumerate(seq):
+        print(im)
+        cv2.imwrite(fn.format(i),im)
 
 (data
 | mp.pshuffle
 | mp.take(15)
 | mp.apply('filename','image',lambda x: cv2.cvtColor(cv2.imread(os.path.splitext(x)[0]+'.jpg'),cv2.COLOR_BGR2RGB))
 | mp.apply(['image','descr'],'face',transform)
-| mp.apply('face','facesmall',functools.partial(im_resize,size=(100,150)))
+| mp.apply('face','facesmall',functools.partial(im_resize,size=(150,150)))
 | mp.apply('descr','ypr',lambda x: "Y={},P={},R={}".format(x['faceAttributes']['headPose']['yaw'],x['faceAttributes']['headPose']['pitch'],x['faceAttributes']['headPose']['roll']))
 | mp.select_field('facesmall')
 | mp.pexec(functools.partial(show_images,cols=3)))
@@ -108,14 +119,21 @@ def generate_img(data):
          | mp.take(n)
          | mp.apply('filename','image',lambda x: cv2.cvtColor(cv2.imread(os.path.splitext(x)[0]+'.jpg'),cv2.COLOR_BGR2RGB))
          | mp.apply(['image','descr'],'face',transform)
-         | mp.apply('face','facesmall',functools.partial(im_resize,size=(100,150)))
-         | mp.select_field('facesmall')
+         #| mp.apply('face','facesmall',functools.partial(im_resize,size=(100,150)))
+         #| mp.select_field('facesmall')
+         | mp.select_field('face')
          | mp.as_list)
     return merge(x,np.random.random(len(x)))
 
 (range(10)
  | mp.select(lambda _: generate_img(data))
  | mp.pexec(functools.partial(show_images,cols=2)))
+
+(range(20)
+ | mp.select(lambda _: generate_img(data))
+ | mp.silly_progress()
+ | savepics('z:/temp/!1/out{}.png'))
+
 
 ## Generate transformed face points
 
