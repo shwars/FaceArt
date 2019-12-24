@@ -1,0 +1,3 @@
+FaceApi:
+  Key: _face_api_key_here
+  Endpoint: https://endpoint.cognitiveservices.azure.com/face/v1.0
