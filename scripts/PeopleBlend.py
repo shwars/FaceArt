@@ -29,6 +29,7 @@ parser.add_argument("--mix",type=int,help="Number of pictures to mix (defaults t
 parser.add_argument("--nocache",help="Do not use face api caching",action='store_true')
 parser.add_argument("--newcache",help="Rewrite the cache file",action='store_true')
 parser.add_argument("--nosign",help="Do not sign photos",action='store_true')
+parser.add_argument("--local-detect",help="Enable local detection of facial landmarks",action='store_true')
 parser.add_argument("--signsize",help="Signature size in pixels",default=None,type=int)
 args = parser.parse_args()
 
@@ -43,6 +44,12 @@ if not args.nocache and not args.newcache:
             cache = pickle.load(f)
     except:
         pass
+
+if args.local_detect:
+    import dlib
+    print(" + Loading model for local detection")
+    detector = dlib.get_frontal_face_detector()
+    predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
 
 sign = None
 if not args.nosign:
@@ -69,6 +76,16 @@ def merge(images,wts=None):
 
 def detect(argms):
     fn,im = argms
+    if args.local_detect:
+        faces = detector(im,1)
+        if len(faces)==0: return []
+        lmarks = predictor(im,faces[0])
+        return {
+            "pupilLeft" : { "x" : (lmarks.part(37).x+lmarks.part(40).x)/2, "y" : (lmarks.part(37).y+lmarks.part(40).y)/2},
+            "pupilRight" : { "x" : (lmarks.part(43).x+lmarks.part(46).x)/2, "y" : (lmarks.part(43).y+lmarks.part(46).y)/2},
+            "mouthLeft" : { "x" : lmarks.part(49).x, "y" : lmarks.part(49).y },
+            "mouthRight" : { "x" : lmarks.part(55).x, "y" : lmarks.part(55).y }
+        }
     h = hash(fn)
     if not args.nocache and h in cache:
         return cache[h][0]['faceLandmarks']
@@ -132,7 +149,7 @@ def generate_img(data):
 
 def imprint(img):
     if args.nosign:
-        return x
+        return img
     overlay_image = sign[..., :3]
     mask = sign[..., 3:] / 255.0
     h,w = sign.shape[0],sign.shape[1]
